@@ -1,0 +1,19 @@
+method: random
+metric:
+  name: val_PSNR
+  goal: maximize
+parameters:
+  learning_rate:
+    values: [0.1, 0.05, 0.01, 0.005, 0.001, 0.0005]
+  optimizer:
+    values: ["adam", "sgd"]
+  loss:
+    values: ["binary_crossentropy", "mean_squared_error"]
+  first_kernel:
+    values: [(3, 3), (5, 5), (7,7)]
+  outer_kernel:
+    values: [(3, 3), (5, 5), (7,7)]
+  middle_kernel:
+    values: [(3, 3), (5, 5), (7,7)]
+  last_kernel:
+    values: [(3, 3), (5, 5), (7,7)]
