@@ -16,7 +16,6 @@ def sweep(epochs, path, model_name, wandb_api_key):
 
         simple_namespace = SimpleNamespace(
             epochs=epochs,
-            batch_size=32,
             path=path,
             model_name=model_name,
             wandb_api_key=wandb_api_key
@@ -31,29 +30,20 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", "-e", type=int, required=True)
     parser.add_argument("--path", "-p", type=str, required=True)
     parser.add_argument("--model_name", "-m", type=str, required=True)
-    parser.add_argument("--runs", "-r", type=int, required=True)
     parser.add_argument("--project_name", "-pn", type=str, required=True)
+    parser.add_argument("--runs", "-r", type=int, required=True)
     parser.add_argument("--wandb_api_key", "-wak", type=str, required=True)
+    parser.add_argument("--sweep_id", "-wi", type=str, required=True)
     args = parser.parse_args()
 
     os.environ["WANDB_API_KEY"] = args.wandb_api_key
 
-    with open("weep_config.yaml", "r") as config_file:
-        try:
-            parsed_yaml = yaml.safe_load(config_file)
-            print('yaml:\n', parsed_yaml)
+    sweep_function = get_sweep(
+        epochs=args.epochs,
+        path=args.path,
+        model_name=args.model_name,
+        wandb_api_key=args.wandb_api_key
+    )
 
-            sweep_id = wandb.sweep(parsed_yaml, entity="mahrkeenerh", project=args.project_name)
-
-            sweep_function = get_sweep(
-                epochs=args.epochs,
-                path=args.path,
-                model_name=args.model_name,
-                wandb_api_key=args.wandb_api_key
-            )
-
-            print("START SWEEPING THE FLOOR NOW!")
-            wandb.agent(sweep_id, function=sweep_function, count=args.runs)
-
-        except yaml.YAMLError as exc:
-            print(exc)
+    print("START SWEEPING THE FLOOR NOW!")
+    wandb.agent(args.sweep_id, function=sweep_function, count=args.runs, project=args.project_name)

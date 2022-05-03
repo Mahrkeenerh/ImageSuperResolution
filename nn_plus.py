@@ -6,6 +6,7 @@ import json, cv2
 import os
 import random
 import sys
+import wandb
 
 
 def PSNR(a, b, max_val=1):
@@ -18,6 +19,7 @@ def SSIM(y_true, y_pred):
 
 class LogToAzure(tf.keras.callbacks.Callback):
     '''Keras Callback for realtime logging to Azure'''
+
     def __init__(self, run):
         super(LogToAzure, self).__init__()
         self.run = run
@@ -28,6 +30,23 @@ class LogToAzure(tf.keras.callbacks.Callback):
             self.run.log(k, v)
 
 
+class LogImage(keras.callbacks.Callback):
+    """Callback for logging images"""
+
+    def on_epoch_end(self, epoch, logs=None):
+        prediction = np.squeeze(self.model(np.expand_dims(valid_low[2], axis=0)), axis=0)
+        prediction_bgr = cv2.cvtColor(prediction, cv2.COLOR_RGB2BGR)
+
+        # if ./outputs/images doesn't exist, create it
+        if not os.path.exists("./outputs/images"):
+            os.makedirs("./outputs/images")
+
+        cv2.imwrite(f'./outputs/images/prediction_{epoch}.png', prediction * 255)
+
+        # wandb log prediction image
+        wandb.log({'prediction': wandb.Image(prediction_bgr, caption=f'Prediction: {epoch}')}, step=epoch)
+
+
 def get_callbacks():
     checkpoint_callback = keras.callbacks.ModelCheckpoint(
         filepath="./outputs/checkpoint",
@@ -36,8 +55,9 @@ def get_callbacks():
     )
 
     azure_log = LogToAzure(Run.get_context())
+    image_log = LogImage()
 
-    return [checkpoint_callback, azure_log]
+    return [checkpoint_callback, azure_log, image_log]
 
 
 def dumpHistory(history):
@@ -64,7 +84,6 @@ def set_data(path, low_train, high_train, low_valid, high_valid):
 
     valid_low = [cv2.imread(os.path.join(path, low_valid, f)) / 255 for f in os.listdir(os.path.join(path, low_valid))]
     valid_high = [cv2.imread(os.path.join(path, high_valid, f)) / 255 for f in os.listdir(os.path.join(path, high_valid))]
-
 
 
 def rotate(low, high):

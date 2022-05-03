@@ -1,12 +1,14 @@
 import time
 import argparse
 from types import SimpleNamespace
+import os
 
 import tensorflow as tf
 from tensorflow import keras as tfk
 import keras
 from keras import layers
 from keras import backend as K
+import wandb
 from wandb.keras import WandbCallback
 
 import nn_plus
@@ -15,29 +17,27 @@ import nn_plus
 class DRCSR_model:
     def __init__(self, simple_namespace, config=None, verbose=True):
         self.epochs = simple_namespace.epochs
-        self.batch_size = simple_namespace.batch_size
         self.path = simple_namespace.path
         self.model_name = simple_namespace.model_name
 
         self.verbose = verbose
         self.config = config
 
-        self.learning_rate = 0.001
-        self.optimizer_name = "adam"
-        self.loss_name = "mean_squared_error"
-        self.callbacks = []
+        self.callbacks = [WandbCallback()]
         self.kernel_sizes = SimpleNamespace(
-            first_kernel=(3, 3),
-            outer_kernel=(3, 3),
-            middle_kernel=(3, 3),
-            last_kernel=(3, 3)
+            first_kernel=3,
+            outer_kernel=3,
+            middle_kernel=3,
+            last_kernel=5
         )
 
         if config is not None:
-            self.learning_rate = config["learning_rate"]
-            self.optimizer_name = config["optimizer"]
-            self.loss_name = config["loss"]
-            self.callbacks = [WandbCallback()]
+            self.kernel_sizes = SimpleNamespace(
+                first_kernel=config["first_kernel"],
+                outer_kernel=config["outer_kernel"],
+                middle_kernel=config["middle_kernel"],
+                last_kernel=config["last_kernel"]
+            )
 
         self.build_model()
         self.build_datasets()
@@ -52,8 +52,8 @@ class DRCSR_model:
             self.callbacks += nn_plus.get_callbacks()
 
             self.model.compile(
-                optimizer=get_optimizer(self.optimizer_name, self.learning_rate),
-                loss=get_loss(self.loss_name),
+                optimizer='adam',
+                loss=tfk.losses.MeanSquaredError(),
                 metrics=[nn_plus.PSNR]
             )
 
@@ -67,13 +67,13 @@ class DRCSR_model:
             start_time = time.time()
 
         nn_plus.set_data(self.path, "train_LR", "train_HR", "valid_LR", "valid_HR")
-        random_generator = nn_plus.get_sized_train_generator(10)
-        valid_generator = nn_plus.get_patch_valid_generator(2)
+        random_generator = nn_plus.get_sized_train_generator(128)
+        valid_generator = nn_plus.get_patch_valid_generator(3)
         # randomized_generator = nn_plus.get_randomized_generator(random_generator)
 
         # self.train_dataset = nn_plus.dataset_from_generator(randomized_generator).batch(32)
-        self.train_dataset = nn_plus.dataset_from_generator(random_generator).batch(32)
-        self.validate_dataset = nn_plus.dataset_from_generator(valid_generator).batch(32)
+        self.train_dataset = nn_plus.dataset_from_generator(random_generator).batch(16)
+        self.validate_dataset = nn_plus.dataset_from_generator(valid_generator).batch(16)
 
         if self.verbose:
             print(
@@ -106,21 +106,21 @@ def conv_block(
     with K.name_scope(block_name):
         layer = layers.Conv2D(
             128,
-            kernel_sizes.outer_kernel,
+            (kernel_sizes.outer_kernel, kernel_sizes.outer_kernel),
             activation='relu',
             padding='same'
         )(input_layer)
 
         layer = layers.Conv2D(
             256,
-            kernel_sizes.middle_kernel,
+            (kernel_sizes.middle_kernel , kernel_sizes.middle_kernel),
             activation='relu',
             padding='same'
         )(layer)
 
         layer = layers.Conv2D(
             128,
-            kernel_sizes.outer_kernel,
+            (kernel_sizes.outer_kernel, kernel_sizes.outer_kernel),
             activation='relu',
             padding='same'
         )(layer)
@@ -132,7 +132,12 @@ def get_model(kernel_sizes: SimpleNamespace) -> keras.Model:
     input_layer = keras.Input(shape=(None, None, 3))
 
     x = layers.Conv2D(32, (3, 3), activation='relu', padding='same')(input_layer)
-    first = layers.Conv2D(128, kernel_sizes.first_kernel, activation='relu', padding='same')(x)
+    first = layers.Conv2D(
+        128,
+        (kernel_sizes.first_kernel, kernel_sizes.first_kernel),
+        activation='relu',
+        padding='same'
+    )(x)
 
     x = conv_block(first, kernel_sizes)
     merged = layers.Add()([first, x])
@@ -151,31 +156,15 @@ def get_model(kernel_sizes: SimpleNamespace) -> keras.Model:
     x = conv_block(x, kernel_sizes)
     merged = layers.Add()([merged, x])
 
-    x = layers.Conv2D(32, kernel_sizes.last_kernel, activation='relu', padding='same')(merged)
+    x = layers.Conv2D(
+        32,
+        (kernel_sizes.last_kernel, kernel_sizes.last_kernel),
+        activation='relu',
+        padding='same'
+    )(merged)
     out = layers.Conv2D(3, (3, 3), activation='sigmoid', padding='same')(x)
 
     return keras.Model(input_layer, out)
-
-
-def get_optimizer(optimizer_name: str, learning_rate: float) -> keras.optimizers.Optimizer:
-    if optimizer_name == 'adam':
-        return tfk.optimizers.Adam(learning_rate)
-
-    if optimizer_name == 'sgd':
-        return tfk.optimizers.SGD(learning_rate)
-    
-    return tfk.optimizers.Adam(learning_rate)
-
-
-def get_loss(loss_name: str) -> tfk.losses.Loss:
-    if loss_name == 'mean_squared_error':
-        return tfk.losses.MeanSquaredError()
-
-    if loss_name == 'binary_crossentropy':
-        return tfk.losses.BinaryCrossentropy()
-    
-    return tf.keras.losses.MeanSquaredError()
-
 
 
 if __name__ == '__main__':
@@ -183,16 +172,20 @@ if __name__ == '__main__':
     parser.add_argument("--epochs", "-e", type=int, required=True)
     parser.add_argument("--path", "-p", type=str, required=True)
     parser.add_argument("--model_name", "-m", type=str, required=True)
+    parser.add_argument("--project_name", "-pn", type=str, required=True)
     parser.add_argument("--wandb_api_key", "-wak", type=str, required=False)
     args = parser.parse_args()
 
+    os.environ["WANDB_API_KEY"] = args.wandb_api_key
+
     simple_namespace = SimpleNamespace(
         epochs=args.epochs,
-        batch_size=32,
         path=args.path,
         model_name=args.model_name
     )
 
-    drcsr_model = DRCSR_model(simple_namespace)
-    drcsr_model.train()
-    drcsr_model.save()
+    with wandb.init(project=args.project_name):
+        drcsr_model = DRCSR_model(simple_namespace)
+
+        drcsr_model.train()
+        drcsr_model.save()
