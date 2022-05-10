@@ -2,7 +2,6 @@ import argparse
 import os
 from types import SimpleNamespace
 import wandb
-import yaml
 import DRCSR
 
 
